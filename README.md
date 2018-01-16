@@ -18,7 +18,14 @@ Flags:
   -n, --task-name="oneshot"  Name of the task to create in the cluster
   -j, --task-json=TASK-JSON  JSON file with task definition describing the
                              container running the task
+  -k, --aws-access-key-id=AWS-ACCESS-KEY-ID
+                             AWS Access Key ID to use (overrides environment)
+  -s, --aws-secret-key=AWS-SECRET-KEY
+                             AWS Secret Access Key to use (overrides
+                             environment)
       --version              Show application version.
+
+
 ```
 
 # usage example

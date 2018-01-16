@@ -45,6 +45,9 @@ var (
 	waitDuration = kingpin.Flag("wait", "How long to wait for task to finish").Short('t').Default("5m").Duration()
 	taskName     = kingpin.Flag("task-name", "Name of the task to create in the cluster").Default("oneshot").Short('n').String()
 	taskJson     = kingpin.Flag("task-json", "JSON file with task definition describing the container running the task").Required().Short('j').File()
+
+	awsKey    = kingpin.Flag("aws-access-key-id", "AWS Access Key ID to use (overrides environment)").Short('k').Envar("AWS_ACCESS_KEY_ID").Required().String()
+	awsSecret = kingpin.Flag("aws-secret-key", "AWS Secret Access Key to use (overrides environment)").Short('s').Envar("AWS_SECRET_ACCESS_KEY").Required().String()
 )
 
 func main() {
@@ -56,8 +59,8 @@ func main() {
 	if *debug {
 		logLevel = aws.LogLevel(aws.LogDebugWithRequestErrors | aws.LogDebugWithHTTPBody)
 	}
-
-	sess, err := session.NewSession(&aws.Config{Credentials: credentials.NewEnvCredentials(), LogLevel: logLevel})
+	creds := credentials.NewStaticCredentials(*awsKey, *awsSecret, "")
+	sess, err := session.NewSession(&aws.Config{Credentials: creds, LogLevel: logLevel})
 	logErrorAndFail(err)
 
 	svc := ecs.New(sess)
@@ -96,7 +99,7 @@ func main() {
 			TaskDefinition: taskArn,
 		})
 		logErrorAndFail(err)
-		log.Printf("DeRegistered %v successfully", taskArn)
+		log.Printf("DeRegistered %v successfully", *taskArn)
 	}()
 
 	clusterName := aws.String(*cluster)
@@ -113,7 +116,7 @@ func main() {
 			log.Print(result.Failures[i])
 		}
 	} else {
-		log.Printf("Waiting for task %v to finish...", taskArn)
+		log.Printf("Waiting for task %v to finish...", *taskArn)
 		startWaitTime := time.Now()
 		taskArns := mapTasks(result.Tasks, func(v *ecs.Task) *string { return v.TaskArn })
 		waitParam := &ecs.DescribeTasksInput{
