@@ -1,0 +1,28 @@
+{
+  "containerDefinitions": [
+    {
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "prod-logs",
+          "awslogs-region": "us-west-2",
+          "awslogs-stream-prefix": "oneshot"
+        }
+      },
+      "entryPoint": null,
+      "environment": [
+        {
+          "name": "S3_PATH",
+          "value": "s3://some_bucket/some_script.sh"
+        }
+      ],
+      "mountPoints": [],
+      "image": "reflog/task-runner",
+      "name": "oneshot"
+    }
+  ],
+  "memory": "128",
+  "memoryReservation": "64",
+  "networkMode": "bridge",
+  "volumes": []
+}
