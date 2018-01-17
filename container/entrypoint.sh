@@ -8,5 +8,5 @@ else
     aws s3 cp $S3_PATH /tmp/oneshot.sh
     chmod +x /tmp/oneshot.sh
     echo "executing..."
-    ./tmp/oneshot.sh
+    . /tmp/oneshot.sh
 fi

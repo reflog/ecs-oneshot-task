@@ -4,14 +4,17 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
+	"strings"
+	"time"
+
+	"text/template"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ecs"
 	"gopkg.in/alecthomas/kingpin.v2"
-	"log"
-	"strings"
-	"time"
 )
 
 func logErrorAndFail(err error) {
@@ -44,23 +47,48 @@ var (
 	cluster      = kingpin.Flag("cluster", "Name of the ECS cluster").Short('c').Required().String()
 	waitDuration = kingpin.Flag("wait", "How long to wait for task to finish").Short('t').Default("5m").Duration()
 	taskName     = kingpin.Flag("task-name", "Name of the task to create in the cluster").Default("oneshot").Short('n').String()
-	taskJson     = kingpin.Flag("task-json", "JSON file with task definition describing the container running the task").Required().Short('j').File()
+	taskJSON     = kingpin.Flag("task-json", "JSON file with task definition describing the container running the task").Required().Short('j').File()
+	passAwsKeys  = kingpin.Flag("pass-aws-keys", "Add AWS keys to task's environment.").Bool()
+	params       = kingpin.Flag("params", "Parameter that can be used inside the JSON file using Go templating").Short('p').StringMap()
 
 	awsKey    = kingpin.Flag("aws-access-key-id", "AWS Access Key ID to use (overrides environment)").Short('k').Envar("AWS_ACCESS_KEY_ID").Required().String()
 	awsSecret = kingpin.Flag("aws-secret-key", "AWS Secret Access Key to use (overrides environment)").Short('s').Envar("AWS_SECRET_ACCESS_KEY").Required().String()
+	awsRegion = kingpin.Flag("aws-region", "AWS Region to user (overrides environment)").Short('r').Envar("AWS_REGION").Required().String()
 )
+
+func deregisterTask(svc *ecs.ECS, taskArn *string) {
+	_, err := svc.DeregisterTaskDefinition(&ecs.DeregisterTaskDefinitionInput{
+		TaskDefinition: taskArn,
+	})
+	logErrorAndFail(err)
+	log.Printf("DeRegistered %v successfully", *taskArn)
+}
 
 func main() {
 	kingpin.Version("0.0.1")
 	kingpin.Parse()
+
 	logLevel := aws.LogLevel(aws.LogOff)
 	var err error
 
 	if *debug {
 		logLevel = aws.LogLevel(aws.LogDebugWithRequestErrors | aws.LogDebugWithHTTPBody)
 	}
+
+	buf := new(bytes.Buffer)
+	_, err = buf.ReadFrom(*taskJSON)
+	logErrorAndFail(err)
+
+	tmpl, err := template.New("json").Parse(buf.String())
+	if err != nil {
+		panic(err)
+	}
+	templatedBuf := &bytes.Buffer{}
+	err = tmpl.Execute(templatedBuf, *params)
+	logErrorAndFail(err)
+
 	creds := credentials.NewStaticCredentials(*awsKey, *awsSecret, "")
-	sess, err := session.NewSession(&aws.Config{Credentials: creds, LogLevel: logLevel})
+	sess, err := session.NewSession(&aws.Config{Credentials: creds, Region: awsRegion, LogLevel: logLevel})
 	logErrorAndFail(err)
 
 	svc := ecs.New(sess)
@@ -75,17 +103,28 @@ func main() {
 	logErrorAndFail(err)
 
 	if len(taskList.TaskDefinitionArns) > 0 {
-		log.Fatalf("A task family with such name (%v) already exists! Sorry :(", *taskName)
+		log.Printf("A previous task family with such name (%v) already exists!", *taskName)
+		deregisterTask(svc, taskList.TaskDefinitionArns[0])
 	}
 
 	def := ecs.RegisterTaskDefinitionInput{}
-
-	buf := new(bytes.Buffer)
-	buf.ReadFrom(*taskJson)
-	err = json.Unmarshal(buf.Bytes(), &def)
+	log.Printf(templatedBuf.String())
+	err = json.Unmarshal(templatedBuf.Bytes(), &def)
 	logErrorAndFail(err)
-	def.Family = taskName
 
+	def.Family = taskName
+	if *passAwsKeys {
+		def.ContainerDefinitions[0].Environment = append(def.ContainerDefinitions[0].Environment, &ecs.KeyValuePair{
+			Name:  aws.String("AWS_ACCESS_KEY_ID"),
+			Value: awsKey,
+		}, &ecs.KeyValuePair{
+			Name:  aws.String("AWS_SECRET_ACCESS_KEY"),
+			Value: awsSecret,
+		}, &ecs.KeyValuePair{
+			Name:  aws.String("AWS_REGION"),
+			Value: awsRegion,
+		})
+	}
 	log.Printf("Registering task definition...")
 	registrationResult, err := svc.RegisterTaskDefinition(&def)
 	logErrorAndFail(err)
@@ -94,13 +133,7 @@ func main() {
 
 	taskArn := aws.String(fmt.Sprintf("%s:%d", *taskName, *registrationResult.TaskDefinition.Revision))
 
-	defer func() {
-		_, err = svc.DeregisterTaskDefinition(&ecs.DeregisterTaskDefinitionInput{
-			TaskDefinition: taskArn,
-		})
-		logErrorAndFail(err)
-		log.Printf("DeRegistered %v successfully", *taskArn)
-	}()
+	defer deregisterTask(svc, taskArn)
 
 	clusterName := aws.String(*cluster)
 	result, err := svc.RunTask(&ecs.RunTaskInput{
@@ -128,7 +161,7 @@ func main() {
 			if err = svc.WaitUntilTasksStopped(waitParam); err == nil {
 				break
 			}
-			waitedTime := time.Now().Sub(startWaitTime)
+			waitedTime := time.Since(startWaitTime)
 			if waitedTime > *waitDuration {
 				log.Fatalf("Aborting due to time out, task still running after %s or another error: %v", shortDur(waitedTime), err)
 			}

@@ -13,7 +13,7 @@
       "environment": [
         {
           "name": "S3_PATH",
-          "value": "s3://some_bucket/some_script.sh"
+          "value": "{{.path}}"
         }
       ],
       "mountPoints": [],
