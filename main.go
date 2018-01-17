@@ -108,7 +108,10 @@ func main() {
 	}
 
 	def := ecs.RegisterTaskDefinitionInput{}
-	log.Printf(templatedBuf.String())
+	if *debug {
+		log.Printf("resulted json task: %v", templatedBuf.String())
+	}
+
 	err = json.Unmarshal(templatedBuf.Bytes(), &def)
 	logErrorAndFail(err)
 
